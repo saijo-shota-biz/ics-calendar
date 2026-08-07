@@ -46,6 +46,9 @@ icsApi.get('/api/ics', async (c) => {
       'Cache-Control': 'no-store',
     })
   } catch (e) {
-    return c.text(`fetch failed: ${(e as Error).message}`, 502)
+    // Log detail server-side only: raw error text (DNS/connection failures)
+    // would let clients probe arbitrary hosts through this proxy.
+    console.error(`ics-proxy: fetch failed for ${target.href}:`, e)
+    return c.text('could not fetch the ICS URL', 502)
   }
 })
