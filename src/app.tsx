@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { Calendar } from '@fullcalendar/core'
+import type { EventInput } from '@fullcalendar/core'
 import jaLocale from '@fullcalendar/core/locales/ja'
-import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
-import listPlugin from '@fullcalendar/list'
 import iCalendarPlugin from '@fullcalendar/icalendar'
 import {
   CalendarSource,
@@ -59,17 +58,34 @@ export function App() {
   useEffect(() => {
     if (!calendarEl.current) return
     const calendar = new Calendar(calendarEl.current, {
-      plugins: [dayGridPlugin, timeGridPlugin, listPlugin, iCalendarPlugin],
-      initialView: 'dayGridMonth',
+      plugins: [timeGridPlugin, iCalendarPlugin],
+      initialView: 'timeGridWeek',
       locale: jaLocale,
       height: '100%',
       headerToolbar: {
         left: 'prev,next today',
         center: 'title',
-        right: 'dayGridMonth,timeGridWeek,listMonth',
+        right: '',
       },
       nowIndicator: true,
-      dayMaxEventRows: true,
+      scrollTime: '08:00:00',
+      // ICS DATE (all-day) events can arrive as midnight-to-midnight timed
+      // blocks that flood the whole day column; move them to the 終日 lane.
+      eventDataTransform: (input: EventInput) => {
+        const isMidnight = (d: unknown) =>
+          d instanceof Date &&
+          d.getHours() === 0 &&
+          d.getMinutes() === 0 &&
+          d.getSeconds() === 0
+        if (
+          !input.allDay &&
+          isMidnight(input.start) &&
+          (input.end == null || isMidnight(input.end))
+        ) {
+          return { ...input, allDay: true }
+        }
+        return input
+      },
     })
     calendar.render()
     calendarRef.current = calendar
