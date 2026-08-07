@@ -43,8 +43,8 @@ npm start       # -> http://localhost:8787
 ## Dev (hot reload)
 
 ```sh
-npm run dev:server   # Hono API on :8787
-npm run dev          # Vite on :5173 (proxies /api to :8787)
+npm run dev   # one process: Vite serves the SPA, and @hono/vite-dev-server
+              # runs the real Worker entry in-process for /api/*
 ```
 
 ## How it works
