@@ -25,6 +25,27 @@ function proxyUrl(icsUrl: string, bust: number): string {
   return `/api/ics?url=${encodeURIComponent(icsUrl)}&_=${bust}`
 }
 
+function hexChannels(hex: string): [number, number, number] | null {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex.trim())
+  if (!m) return null
+  const n = parseInt(m[1], 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+
+// Solid saturated blocks are hard on the eyes; render events as a soft
+// tint of the calendar color with a deep tone of the same hue for text.
+function softBackground(hex: string): string {
+  const c = hexChannels(hex)
+  return c ? `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.18)` : hex
+}
+
+function softText(hex: string): string {
+  const c = hexChannels(hex)
+  return c
+    ? `rgb(${Math.round(c[0] * 0.55)}, ${Math.round(c[1] * 0.55)}, ${Math.round(c[2] * 0.55)})`
+    : hex
+}
+
 export function App() {
   const [sources, setSources] = useState<CalendarSource[]>(loadSources)
   const [name, setName] = useState('')
@@ -69,22 +90,42 @@ export function App() {
       },
       nowIndicator: true,
       scrollTime: '08:00:00',
-      // ICS DATE (all-day) events can arrive as midnight-to-midnight timed
-      // blocks that flood the whole day column; move them to the 終日 lane.
+      // Some feeds (e.g. Google) write all-day events as timed UTC spans
+      // like 20260812T150000Z–20260813T150000Z (= JST midnight-to-midnight).
+      // The icalendar plugin emits these as timed ISO strings, which would
+      // flood the whole day column; detect local-midnight-to-midnight spans
+      // and rewrite them as date-only all-day events for the 終日 lane.
       eventDataTransform: (input: EventInput) => {
-        const isMidnight = (d: unknown) =>
-          d instanceof Date &&
-          d.getHours() === 0 &&
-          d.getMinutes() === 0 &&
-          d.getSeconds() === 0
-        if (
-          !input.allDay &&
-          isMidnight(input.start) &&
-          (input.end == null || isMidnight(input.end))
-        ) {
-          return { ...input, allDay: true }
+        const asLocalMidnight = (v: unknown): Date | null => {
+          const d =
+            v instanceof Date ? v : typeof v === 'string' ? new Date(v) : null
+          if (!d || Number.isNaN(d.getTime())) return null
+          const isMidnight =
+            d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0
+          return isMidnight ? d : null
         }
-        return input
+        const toDateOnly = (d: Date) =>
+          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+        if (input.allDay || input.start == null) return input
+        const start = asLocalMidnight(input.start)
+        if (!start) return input
+        if (input.end == null) {
+          return {
+            ...input,
+            allDay: true,
+            start: toDateOnly(start),
+            end: undefined,
+          }
+        }
+        const end = asLocalMidnight(input.end)
+        if (!end) return input
+        return {
+          ...input,
+          allDay: true,
+          start: toDateOnly(start),
+          end: toDateOnly(end),
+        }
       },
     })
     calendar.render()
@@ -103,7 +144,9 @@ export function App() {
           id: src.id,
           url: proxyUrl(src.url, refreshTick),
           format: 'ics',
-          color: src.color,
+          backgroundColor: softBackground(src.color),
+          borderColor: 'transparent',
+          textColor: softText(src.color),
         })
       }
     })

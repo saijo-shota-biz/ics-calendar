@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { normalizeIcs } from './ics-normalize'
 
 // Guardrails: this proxy is deployed on a public URL, so it must not be
 // usable as a generic "fetch anything" relay. It only returns content
@@ -41,7 +42,7 @@ icsApi.get('/api/ics', async (c) => {
     if (!body.slice(0, 2000).includes('BEGIN:VCALENDAR')) {
       return c.text('URL did not return an ICS file', 502)
     }
-    return c.body(body, 200, {
+    return c.body(normalizeIcs(body), 200, {
       'Content-Type': 'text/calendar; charset=utf-8',
       'Cache-Control': 'no-store',
     })
