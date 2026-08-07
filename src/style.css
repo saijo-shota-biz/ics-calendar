@@ -211,34 +211,6 @@ input {
   color: var(--accent);
 }
 
-.team-members {
-  list-style: none;
-  margin: 2px 0 0;
-  padding: 0 0 0 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.team-members label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  cursor: pointer;
-  padding: 3px 6px;
-  border-radius: 6px;
-  font-size: 12.5px;
-}
-
-.team-members label:hover {
-  background: #f3f4f7;
-}
-
-.team-members input[type='checkbox'] {
-  accent-color: var(--accent);
-}
-
 .empty-note {
   margin: 0;
   font-size: 11.5px;

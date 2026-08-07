@@ -483,25 +483,6 @@ export function App() {
                   ×
                 </button>
               </div>
-              <ul class="team-members">
-                {g.memberIds.map((id) => {
-                  const s = sources.find((src) => src.id === id)
-                  if (!s) return null
-                  return (
-                    <li key={id}>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={s.enabled}
-                          onChange={() => toggleSource(id)}
-                        />
-                        <span class="dot" style={{ background: s.color }} />
-                        <span class="source-name">{s.name}</span>
-                      </label>
-                    </li>
-                  )
-                })}
-              </ul>
             </div>
           ))}
           {groups.length === 0 && (
