@@ -12,7 +12,6 @@ import {
   nextColor,
   toShareJson,
   parseShareJson,
-  PALETTE,
 } from './storage'
 
 interface ImportRow {
@@ -46,6 +45,16 @@ export function App() {
   useEffect(() => {
     saveSources(sources)
   }, [sources])
+
+  const importOpen = importRows !== null
+  useEffect(() => {
+    if (!importOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setImportRows(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [importOpen])
 
   useEffect(() => {
     if (!calendarEl.current) return
@@ -95,6 +104,10 @@ export function App() {
       new URL(trimmedUrl)
     } catch {
       setError('URLの形式が正しくありません')
+      return
+    }
+    if (sources.some((s) => s.url === trimmedUrl)) {
+      setError('このURLはすでに追加されています')
       return
     }
 
@@ -189,10 +202,7 @@ export function App() {
       const next = [...prev]
       for (const row of toAdd) {
         const colorTaken = next.some((s) => s.color === row.color)
-        const color =
-          row.color && PALETTE.includes(row.color) && !colorTaken
-            ? row.color
-            : nextColor(next)
+        const color = row.color && !colorTaken ? row.color : nextColor(next)
         next.push({
           id: crypto.randomUUID(),
           name: row.name.trim() || row.url,
@@ -214,12 +224,14 @@ export function App() {
         <form onSubmit={addSource}>
           <input
             type="text"
+            required
             placeholder="名前（例: 会社の予定）"
             value={name}
             onInput={(e) => setName((e.target as HTMLInputElement).value)}
           />
           <input
             type="text"
+            required
             placeholder="ICSのURL (https://...)"
             value={url}
             onInput={(e) => setUrl((e.target as HTMLInputElement).value)}

@@ -9,14 +9,14 @@ export interface CalendarSource {
 const STORAGE_KEY = 'ics-calendar:sources'
 
 export const PALETTE = [
-  '#2563eb', // blue
-  '#dc2626', // red
-  '#16a34a', // green
-  '#d97706', // amber
-  '#9333ea', // purple
-  '#0891b2', // cyan
-  '#db2777', // pink
-  '#65a30d', // lime
+  '#6366f1', // indigo
+  '#f43f5e', // rose
+  '#10b981', // emerald
+  '#f59e0b', // amber
+  '#8b5cf6', // violet
+  '#0ea5e9', // sky
+  '#ec4899', // pink
+  '#84cc16', // lime
 ]
 
 export function loadSources(): CalendarSource[] {
@@ -25,10 +25,24 @@ export function loadSources(): CalendarSource[] {
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return parsed.filter(
-      (s): s is CalendarSource =>
-        typeof s?.id === 'string' && typeof s?.name === 'string' && typeof s?.url === 'string',
-    )
+    return parsed
+      .filter(
+        (s) =>
+          typeof s?.id === 'string' && typeof s?.name === 'string' && typeof s?.url === 'string',
+      )
+      .map(
+        (s, i): CalendarSource => ({
+          id: s.id,
+          name: s.name,
+          url: s.url,
+          color:
+            typeof s.color === 'string' && s.color
+              ? s.color
+              : PALETTE[i % PALETTE.length],
+          // missing/garbage "enabled" must not silently hide a calendar
+          enabled: s.enabled !== false,
+        }),
+      )
   } catch {
     return []
   }
