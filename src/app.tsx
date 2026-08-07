@@ -1,0 +1,356 @@
+import { useEffect, useRef, useState } from 'preact/hooks'
+import { Calendar } from '@fullcalendar/core'
+import jaLocale from '@fullcalendar/core/locales/ja'
+import dayGridPlugin from '@fullcalendar/daygrid'
+import timeGridPlugin from '@fullcalendar/timegrid'
+import listPlugin from '@fullcalendar/list'
+import iCalendarPlugin from '@fullcalendar/icalendar'
+import {
+  CalendarSource,
+  loadSources,
+  saveSources,
+  nextColor,
+  toShareJson,
+  parseShareJson,
+  PALETTE,
+} from './storage'
+
+interface ImportRow {
+  name: string
+  url: string
+  color?: string
+  exists: boolean
+  selected: boolean
+}
+
+function proxyUrl(icsUrl: string, bust: number): string {
+  return `/api/ics?url=${encodeURIComponent(icsUrl)}&_=${bust}`
+}
+
+export function App() {
+  const [sources, setSources] = useState<CalendarSource[]>(loadSources)
+  const [name, setName] = useState('')
+  const [url, setUrl] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  // bump to force FullCalendar to drop its sources and fetch fresh ICS
+  const [refreshTick, setRefreshTick] = useState(() => Date.now())
+  // non-null while the import preview dialog is open
+  const [importRows, setImportRows] = useState<ImportRow[] | null>(null)
+  const [importError, setImportError] = useState('')
+
+  const calendarEl = useRef<HTMLDivElement>(null)
+  const calendarRef = useRef<Calendar | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    saveSources(sources)
+  }, [sources])
+
+  useEffect(() => {
+    if (!calendarEl.current) return
+    const calendar = new Calendar(calendarEl.current, {
+      plugins: [dayGridPlugin, timeGridPlugin, listPlugin, iCalendarPlugin],
+      initialView: 'dayGridMonth',
+      locale: jaLocale,
+      height: '100%',
+      headerToolbar: {
+        left: 'prev,next today',
+        center: 'title',
+        right: 'dayGridMonth,timeGridWeek,listMonth',
+      },
+      nowIndicator: true,
+      dayMaxEventRows: true,
+    })
+    calendar.render()
+    calendarRef.current = calendar
+    return () => calendar.destroy()
+  }, [])
+
+  useEffect(() => {
+    const calendar = calendarRef.current
+    if (!calendar) return
+    calendar.batchRendering(() => {
+      calendar.getEventSources().forEach((s) => s.remove())
+      for (const src of sources) {
+        if (!src.enabled) continue
+        calendar.addEventSource({
+          id: src.id,
+          url: proxyUrl(src.url, refreshTick),
+          format: 'ics',
+          color: src.color,
+        })
+      }
+    })
+  }, [sources, refreshTick])
+
+  async function addSource(e: Event) {
+    e.preventDefault()
+    setError('')
+    const trimmedName = name.trim()
+    const trimmedUrl = url.trim()
+    if (!trimmedName || !trimmedUrl) return
+
+    try {
+      new URL(trimmedUrl)
+    } catch {
+      setError('URLの形式が正しくありません')
+      return
+    }
+
+    setBusy(true)
+    try {
+      const res = await fetch(proxyUrl(trimmedUrl, Date.now()))
+      const text = await res.text()
+      if (!res.ok) {
+        setError(`取得に失敗しました: ${text}`)
+        return
+      }
+      if (!text.includes('BEGIN:VCALENDAR')) {
+        setError('このURLはICS形式ではないようです')
+        return
+      }
+      setSources((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          name: trimmedName,
+          url: trimmedUrl,
+          color: nextColor(prev),
+          enabled: true,
+        },
+      ])
+      setName('')
+      setUrl('')
+    } catch {
+      setError('サーバーに接続できません')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function removeSource(id: string) {
+    const target = sources.find((s) => s.id === id)
+    if (target && !confirm(`「${target.name}」を削除しますか？`)) return
+    setSources((prev) => prev.filter((s) => s.id !== id))
+  }
+
+  function toggleSource(id: string) {
+    setSources((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s)),
+    )
+  }
+
+  function exportJson() {
+    const blob = new Blob([toShareJson(sources)], {
+      type: 'application/json',
+    })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'ics-calendars.json'
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  async function onImportFile(e: Event) {
+    const input = e.target as HTMLInputElement
+    const file = input.files?.[0]
+    input.value = '' // allow choosing the same file again later
+    if (!file) return
+    setImportError('')
+    try {
+      const shared = parseShareJson(await file.text())
+      if (shared.length === 0) {
+        setImportError('ファイルに有効なカレンダーがありません')
+        return
+      }
+      const existing = new Set(sources.map((s) => s.url))
+      setImportRows(
+        shared.map((c) => {
+          const exists = existing.has(c.url)
+          return { ...c, exists, selected: !exists }
+        }),
+      )
+    } catch {
+      setImportError('JSONファイルを読み込めませんでした')
+    }
+  }
+
+  function updateImportRow(index: number, patch: Partial<ImportRow>) {
+    setImportRows((rows) =>
+      rows ? rows.map((r, i) => (i === index ? { ...r, ...patch } : r)) : rows,
+    )
+  }
+
+  function confirmImport() {
+    if (!importRows) return
+    const toAdd = importRows.filter((r) => r.selected && !r.exists)
+    setSources((prev) => {
+      const next = [...prev]
+      for (const row of toAdd) {
+        const colorTaken = next.some((s) => s.color === row.color)
+        const color =
+          row.color && PALETTE.includes(row.color) && !colorTaken
+            ? row.color
+            : nextColor(next)
+        next.push({
+          id: crypto.randomUUID(),
+          name: row.name.trim() || row.url,
+          url: row.url,
+          color,
+          enabled: true,
+        })
+      }
+      return next
+    })
+    setImportRows(null)
+  }
+
+  return (
+    <div class="layout">
+      <aside class="sidebar">
+        <h1>ICS カレンダー</h1>
+
+        <form onSubmit={addSource}>
+          <input
+            type="text"
+            placeholder="名前（例: 会社の予定）"
+            value={name}
+            onInput={(e) => setName((e.target as HTMLInputElement).value)}
+          />
+          <input
+            type="text"
+            placeholder="ICSのURL (https://...)"
+            value={url}
+            onInput={(e) => setUrl((e.target as HTMLInputElement).value)}
+          />
+          <button type="submit" disabled={busy}>
+            {busy ? '確認中…' : '追加'}
+          </button>
+          {error && <p class="error">{error}</p>}
+        </form>
+
+        <ul class="source-list">
+          {sources.map((s) => (
+            <li key={s.id}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={s.enabled}
+                  onChange={() => toggleSource(s.id)}
+                />
+                <span class="dot" style={{ background: s.color }} />
+                <span class="source-name" title={s.url}>
+                  {s.name}
+                </span>
+              </label>
+              <button
+                class="remove"
+                title="削除"
+                onClick={() => removeSource(s.id)}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+          {sources.length === 0 && (
+            <li class="empty">まだカレンダーがありません</li>
+          )}
+        </ul>
+
+        <button
+          class="refresh"
+          onClick={() => setRefreshTick(Date.now())}
+          disabled={sources.length === 0}
+        >
+          ↻ 最新の予定を取得
+        </button>
+
+        <div class="share">
+          <h2>チームで共有</h2>
+          <div class="share-buttons">
+            <button
+              class="secondary"
+              onClick={exportJson}
+              disabled={sources.length === 0}
+            >
+              ⬇ エクスポート
+            </button>
+            <button class="secondary" onClick={() => fileInput.current?.click()}>
+              ⬆ インポート
+            </button>
+          </div>
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".json,application/json"
+            class="hidden-file"
+            onChange={onImportFile}
+          />
+          {importError && <p class="error">{importError}</p>}
+        </div>
+
+        <p class="note">
+          URLと名前はこの端末（localStorage）にだけ保存されます。JSONファイルを配れば、チームの他のメンバーも同じカレンダーを見られます。
+        </p>
+      </aside>
+
+      <main class="calendar-area">
+        <div ref={calendarEl} class="calendar" />
+      </main>
+
+      {importRows && (
+        <div class="modal-overlay" onClick={() => setImportRows(null)}>
+          <div class="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>インポートする内容の確認</h2>
+            <p class="modal-hint">
+              取り込むものにチェックを入れ、必要なら名前を編集してください。
+            </p>
+            <ul class="import-list">
+              {importRows.map((row, i) => (
+                <li key={row.url} class={row.exists ? 'exists' : ''}>
+                  <input
+                    type="checkbox"
+                    checked={row.selected}
+                    disabled={row.exists}
+                    onChange={() =>
+                      updateImportRow(i, { selected: !row.selected })
+                    }
+                  />
+                  <div class="import-fields">
+                    <input
+                      type="text"
+                      value={row.name}
+                      disabled={row.exists}
+                      onInput={(e) =>
+                        updateImportRow(i, {
+                          name: (e.target as HTMLInputElement).value,
+                        })
+                      }
+                    />
+                    <span class="import-url" title={row.url}>
+                      {row.exists ? '追加済み ・ ' : ''}
+                      {row.url}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <div class="modal-buttons">
+              <button class="secondary" onClick={() => setImportRows(null)}>
+                キャンセル
+              </button>
+              <button
+                onClick={confirmImport}
+                disabled={!importRows.some((r) => r.selected && !r.exists)}
+              >
+                {importRows.filter((r) => r.selected && !r.exists).length}
+                件を取り込む
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
