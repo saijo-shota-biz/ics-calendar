@@ -42,9 +42,13 @@ icsApi.get('/api/ics', async (c) => {
     if (!body.slice(0, 2000).includes('BEGIN:VCALENDAR')) {
       return c.text('URL did not return an ICS file', 502)
     }
+    // Freshness is controlled by the client: every page load / refresh
+    // puts a new timestamp in the query string, which makes the browser
+    // cache miss. Within one session the URL is stable, so re-enabling a
+    // calendar is served from cache instantly instead of refetching.
     return c.body(normalizeIcs(body), 200, {
       'Content-Type': 'text/calendar; charset=utf-8',
-      'Cache-Control': 'no-store',
+      'Cache-Control': 'private, max-age=3600',
     })
   } catch (e) {
     // Log detail server-side only: raw error text (DNS/connection failures)

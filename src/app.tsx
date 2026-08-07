@@ -181,13 +181,27 @@ export function App() {
     return () => calendar.destroy()
   }, [])
 
+  // Diff instead of tearing every source down: toggling one calendar
+  // must not refetch the others. FullCalendar's own source list is the
+  // registry — a source is current iff its registered URL (which encodes
+  // the source URL and the refresh tick) matches. If a color-edit feature
+  // is ever added, color must join this comparison.
   useEffect(() => {
     const calendar = calendarRef.current
     if (!calendar) return
+    const desired = new Map(
+      sources.filter((s) => s.enabled).map((s) => [s.id, s]),
+    )
     calendar.batchRendering(() => {
-      calendar.getEventSources().forEach((s) => s.remove())
-      for (const src of sources) {
-        if (!src.enabled) continue
+      for (const es of calendar.getEventSources()) {
+        const want = desired.get(es.id)
+        if (want && es.url === proxyUrl(want.url, refreshTick)) {
+          desired.delete(es.id) // unchanged — leave it alone
+        } else {
+          es.remove()
+        }
+      }
+      for (const src of desired.values()) {
         calendar.addEventSource({
           id: src.id,
           url: proxyUrl(src.url, refreshTick),
@@ -220,7 +234,9 @@ export function App() {
 
     setBusy(true)
     try {
-      const res = await fetch(proxyUrl(trimmedUrl, Date.now()))
+      // validate with the current tick so this fetch warms the cache
+      // entry the calendar effect will reuse right after adding
+      const res = await fetch(proxyUrl(trimmedUrl, refreshTick))
       const text = await res.text()
       if (!res.ok) {
         setError(`取得に失敗しました: ${text}`)
