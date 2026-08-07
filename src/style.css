@@ -311,7 +311,7 @@ button.secondary:hover:not(:disabled) {
   --fc-button-hover-border-color: #cfd5df;
   --fc-button-active-bg-color: var(--accent);
   --fc-button-active-border-color: var(--accent);
-  --fc-event-border-color: transparent;
+  --fc-event-border-color: var(--accent);
   --fc-list-event-hover-bg-color: #f6f7fa;
   --fc-small-font-size: 0.83em;
 }
@@ -360,16 +360,16 @@ button.secondary:hover:not(:disabled) {
   color: var(--text-dim);
 }
 
-/* events: soft tint fill + slim colored left edge for definition */
+/* events: soft tint fill + slim colored edge on true starts only —
+   continuation segments of multi-day events must stay edge-free */
 .calendar.fc .fc-timegrid-event {
   border-radius: 6px;
   padding: 1px 3px 1px 6px;
   font-size: 11.5px;
-  box-shadow: none;
-  border-width: 0 0 0 3px;
+  border-width: 0;
 }
 
-.calendar.fc .fc-daygrid-event {
+.calendar.fc .fc-timegrid-event.fc-event-start {
   border-width: 0 0 0 3px;
 }
 
@@ -377,6 +377,11 @@ button.secondary:hover:not(:disabled) {
   border-radius: 5px;
   padding: 1px 5px;
   font-size: 11.5px;
+  border-width: 0;
+}
+
+.calendar.fc .fc-daygrid-event.fc-event-start {
+  border-width: 0 0 0 3px;
 }
 
 .calendar.fc .fc-daygrid-dot-event .fc-event-title,

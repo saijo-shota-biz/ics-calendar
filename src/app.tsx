@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { Calendar } from '@fullcalendar/core'
-import type { EventInput } from '@fullcalendar/core'
+import type { CalendarOptions, EventInput } from '@fullcalendar/core'
 import jaLocale from '@fullcalendar/core/locales/ja'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import iCalendarPlugin from '@fullcalendar/icalendar'
@@ -25,28 +25,15 @@ function proxyUrl(icsUrl: string, bust: number): string {
   return `/api/ics?url=${encodeURIComponent(icsUrl)}&_=${bust}`
 }
 
-function hexChannels(hex: string): [number, number, number] | null {
-  const m = /^#([0-9a-f]{6})$/i.exec(hex.trim())
-  if (!m) return null
-  const n = parseInt(m[1], 16)
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
-}
-
 // Solid saturated blocks are hard on the eyes; render events as a soft
 // tint of the calendar color with a deep tone of the same hue for text.
-// Opaque mix (not alpha) so the tint reads the same over any cell shading.
-function softBackground(hex: string): string {
-  const c = hexChannels(hex)
-  if (!c) return hex
-  const mix = c.map((ch) => Math.round(255 - (255 - ch) * 0.3))
-  return `rgb(${mix[0]}, ${mix[1]}, ${mix[2]})`
+// color-mix() handles every valid CSS color, not just 6-digit hex.
+function softBackground(color: string): string {
+  return `color-mix(in srgb, ${color} 30%, white)`
 }
 
-function softText(hex: string): string {
-  const c = hexChannels(hex)
-  return c
-    ? `rgb(${Math.round(c[0] * 0.55)}, ${Math.round(c[1] * 0.55)}, ${Math.round(c[2] * 0.55)})`
-    : hex
+function softText(color: string): string {
+  return `color-mix(in srgb, ${color} 55%, black)`
 }
 
 export function App() {
@@ -93,12 +80,33 @@ export function App() {
       },
       nowIndicator: true,
       scrollTime: '08:00:00',
+      // Render overlapping events side by side so conflicting meetings
+      // stay visible. (Timegrid option missing from CalendarOptions
+      // typings, same as allDaySlot — hence the cast.)
+      ...({ slotEventOverlap: false } as CalendarOptions),
       // Some feeds (e.g. Google) write all-day events as timed UTC spans
       // like 20260812T150000Z–20260813T150000Z (= JST midnight-to-midnight).
       // The icalendar plugin emits these as timed ISO strings, which would
       // flood the whole day column; detect local-midnight-to-midnight spans
       // and rewrite them as date-only all-day events for the 終日 lane.
       eventDataTransform: (input: EventInput) => {
+        // A hostile feed could set URL:javascript:... which would land in
+        // the event anchor's href; only http(s) links may pass through.
+        if (typeof input.url === 'string') {
+          let safe = false
+          try {
+            const u = new URL(input.url)
+            safe = u.protocol === 'http:' || u.protocol === 'https:'
+          } catch {
+            safe = false
+          }
+          if (!safe) {
+            // drop the key entirely — url: undefined still stringifies
+            // into href="undefined" inside FullCalendar
+            const { url: _url, ...rest } = input
+            input = rest
+          }
+        }
         const asLocalMidnight = (v: unknown): Date | null => {
           const d =
             v instanceof Date ? v : typeof v === 'string' ? new Date(v) : null

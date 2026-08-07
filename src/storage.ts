@@ -19,6 +19,15 @@ export const PALETTE = [
   '#84cc16', // lime
 ]
 
+function isValidColor(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    typeof CSS !== 'undefined' &&
+    CSS.supports('color', value)
+  )
+}
+
 export function loadSources(): CalendarSource[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -35,10 +44,7 @@ export function loadSources(): CalendarSource[] {
           id: s.id,
           name: s.name,
           url: s.url,
-          color:
-            typeof s.color === 'string' && s.color
-              ? s.color
-              : PALETTE[i % PALETTE.length],
+          color: isValidColor(s.color) ? s.color : PALETTE[i % PALETTE.length],
           // missing/garbage "enabled" must not silently hide a calendar
           enabled: s.enabled !== false,
         }),
@@ -103,7 +109,7 @@ export function parseShareJson(text: string): SharedCalendar[] {
           ? item.name.trim()
           : url,
       url,
-      color: typeof item?.color === 'string' ? item.color : undefined,
+      color: isValidColor(item?.color) ? item.color : undefined,
     })
   }
   return result

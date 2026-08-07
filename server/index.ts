@@ -12,6 +12,7 @@ app.route('/', icsApi)
 app.use('/*', serveStatic({ root: './dist' }))
 app.use('*', serveStatic({ path: './dist/index.html' }))
 
-serve({ fetch: app.fetch, port: PORT }, () => {
+// bind to loopback only — this dev server must not be reachable from LAN
+serve({ fetch: app.fetch, port: PORT, hostname: '127.0.0.1' }, () => {
   console.log(`ics-calendar server: http://localhost:${PORT}`)
 })
