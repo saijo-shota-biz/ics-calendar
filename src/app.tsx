@@ -660,7 +660,7 @@ export function App() {
             <input
               type="text"
               class="team-name-input"
-              placeholder="チーム名（例: HaiMate）"
+              placeholder="チーム名"
               value={groupDraft.name}
               onInput={(e) =>
                 setGroupDraft({
