@@ -7,13 +7,6 @@ export interface CalendarSource {
 }
 
 const STORAGE_KEY = 'ics-calendar:sources'
-const GROUPS_KEY = 'ics-calendar:groups'
-
-export interface CalendarGroup {
-  id: string
-  name: string
-  memberIds: string[]
-}
 
 export const PALETTE = [
   '#6366f1', // indigo
@@ -65,32 +58,6 @@ export function saveSources(sources: CalendarSource[]): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(sources))
 }
 
-export function loadGroups(): CalendarGroup[] {
-  try {
-    const raw = localStorage.getItem(GROUPS_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed
-      .filter((g) => typeof g?.id === 'string' && typeof g?.name === 'string')
-      .map(
-        (g): CalendarGroup => ({
-          id: g.id,
-          name: g.name,
-          memberIds: Array.isArray(g.memberIds)
-            ? g.memberIds.filter((m: unknown): m is string => typeof m === 'string')
-            : [],
-        }),
-      )
-  } catch {
-    return []
-  }
-}
-
-export function saveGroups(groups: CalendarGroup[]): void {
-  localStorage.setItem(GROUPS_KEY, JSON.stringify(groups))
-}
-
 export function nextColor(sources: CalendarSource[]): string {
   const used = new Set(sources.map((s) => s.color))
   return PALETTE.find((c) => !used.has(c)) ?? PALETTE[sources.length % PALETTE.length]
@@ -104,71 +71,39 @@ export interface SharedCalendar {
   color?: string
 }
 
-// Groups reference members by URL, not by id — ids differ per device,
-// URLs are the stable cross-device key.
-export interface SharedGroup {
-  name: string
-  urls: string[]
-}
-
-export interface SharedData {
-  calendars: SharedCalendar[]
-  groups: SharedGroup[]
-}
-
-function isHttpUrl(value: unknown): value is string {
-  if (typeof value !== 'string') return false
-  try {
-    const parsed = new URL(value)
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
-  } catch {
-    return false
-  }
-}
-
-export function toShareJson(
-  sources: CalendarSource[],
-  groups: CalendarGroup[],
-): string {
-  const urlById = new Map(sources.map((s) => [s.id, s.url]))
+export function toShareJson(sources: CalendarSource[]): string {
   const calendars: SharedCalendar[] = sources.map(({ name, url, color }) => ({
     name,
     url,
     color,
   }))
-  const sharedGroups: SharedGroup[] = groups.map((g) => ({
-    name: g.name,
-    urls: g.memberIds
-      .map((id) => urlById.get(id))
-      .filter((u): u is string => typeof u === 'string'),
-  }))
-  return JSON.stringify(
-    { version: 2, calendars, groups: sharedGroups },
-    null,
-    2,
-  )
+  return JSON.stringify({ version: 1, calendars }, null, 2)
 }
 
 /**
- * Accepts the v2 shape `{version, calendars, groups}`, the v1 shape
- * without groups, or a bare calendar array. Calendars keep only entries
- * with a valid http(s) URL, de-duplicated by URL (first one wins);
- * groups keep only valid member URLs, de-duplicated by name.
- * Throws on unusable input.
+ * Accepts either the exported shape `{version, calendars: [...]}` or a
+ * bare array `[...]`. Returns only entries with a valid http(s) URL,
+ * de-duplicated by URL (first one wins). Throws on unusable input.
  */
-export function parseShareJson(text: string): SharedData {
+export function parseShareJson(text: string): SharedCalendar[] {
   const data = JSON.parse(text)
   const list: unknown = Array.isArray(data) ? data : data?.calendars
   if (!Array.isArray(list)) {
     throw new Error('no "calendars" array found')
   }
   const seen = new Set<string>()
-  const calendars: SharedCalendar[] = []
+  const result: SharedCalendar[] = []
   for (const item of list) {
     const url = typeof item?.url === 'string' ? item.url.trim() : ''
-    if (!isHttpUrl(url) || seen.has(url)) continue
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue
+    } catch {
+      continue
+    }
+    if (seen.has(url)) continue
     seen.add(url)
-    calendars.push({
+    result.push({
       name:
         typeof item?.name === 'string' && item.name.trim()
           ? item.name.trim()
@@ -177,21 +112,5 @@ export function parseShareJson(text: string): SharedData {
       color: isValidColor(item?.color) ? item.color : undefined,
     })
   }
-
-  const groups: SharedGroup[] = []
-  const rawGroups: unknown = Array.isArray(data) ? [] : data?.groups
-  if (Array.isArray(rawGroups)) {
-    const names = new Set<string>()
-    for (const g of rawGroups) {
-      const name = typeof g?.name === 'string' ? g.name.trim() : ''
-      if (!name || names.has(name)) continue
-      names.add(name)
-      groups.push({
-        name,
-        urls: Array.isArray(g.urls) ? g.urls.filter(isHttpUrl) : [],
-      })
-    }
-  }
-
-  return { calendars, groups }
+  return result
 }
