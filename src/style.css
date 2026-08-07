@@ -360,11 +360,17 @@ button.secondary:hover:not(:disabled) {
   color: var(--text-dim);
 }
 
+/* events: soft tint fill + slim colored left edge for definition */
 .calendar.fc .fc-timegrid-event {
   border-radius: 6px;
-  padding: 1px 3px;
+  padding: 1px 3px 1px 6px;
   font-size: 11.5px;
   box-shadow: none;
+  border-width: 0 0 0 3px;
+}
+
+.calendar.fc .fc-daygrid-event {
+  border-width: 0 0 0 3px;
 }
 
 .calendar.fc .fc-daygrid-event {

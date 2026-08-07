@@ -34,9 +34,12 @@ function hexChannels(hex: string): [number, number, number] | null {
 
 // Solid saturated blocks are hard on the eyes; render events as a soft
 // tint of the calendar color with a deep tone of the same hue for text.
+// Opaque mix (not alpha) so the tint reads the same over any cell shading.
 function softBackground(hex: string): string {
   const c = hexChannels(hex)
-  return c ? `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.18)` : hex
+  if (!c) return hex
+  const mix = c.map((ch) => Math.round(255 - (255 - ch) * 0.3))
+  return `rgb(${mix[0]}, ${mix[1]}, ${mix[2]})`
 }
 
 function softText(hex: string): string {
@@ -145,7 +148,7 @@ export function App() {
           url: proxyUrl(src.url, refreshTick),
           format: 'ics',
           backgroundColor: softBackground(src.color),
-          borderColor: 'transparent',
+          borderColor: src.color,
           textColor: softText(src.color),
         })
       }
