@@ -6,8 +6,12 @@ import timeGridPlugin from '@fullcalendar/timegrid'
 import iCalendarPlugin from '@fullcalendar/icalendar'
 import {
   CalendarSource,
+  CalendarGroup,
+  SharedGroup,
   loadSources,
   saveSources,
+  loadGroups,
+  saveGroups,
   nextColor,
   toShareJson,
   parseShareJson,
@@ -19,6 +23,12 @@ interface ImportRow {
   color?: string
   exists: boolean
   selected: boolean
+}
+
+interface GroupDraft {
+  id: string | null // null = creating a new group
+  name: string
+  memberIds: string[]
 }
 
 function proxyUrl(icsUrl: string, bust: number): string {
@@ -47,6 +57,11 @@ export function App() {
   // non-null while the import preview dialog is open
   const [importRows, setImportRows] = useState<ImportRow[] | null>(null)
   const [importError, setImportError] = useState('')
+  const [pendingGroups, setPendingGroups] = useState<SharedGroup[]>([])
+  const [includeGroups, setIncludeGroups] = useState(true)
+  const [groups, setGroups] = useState<CalendarGroup[]>(loadGroups)
+  // non-null while the team create/edit dialog is open
+  const [groupDraft, setGroupDraft] = useState<GroupDraft | null>(null)
 
   const calendarEl = useRef<HTMLDivElement>(null)
   const calendarRef = useRef<Calendar | null>(null)
@@ -56,15 +71,37 @@ export function App() {
     saveSources(sources)
   }, [sources])
 
-  const importOpen = importRows !== null
   useEffect(() => {
-    if (!importOpen) return
+    saveGroups(groups)
+  }, [groups])
+
+  // drop member ids that no longer exist (calendar was deleted)
+  useEffect(() => {
+    setGroups((prev) => {
+      const valid = new Set(sources.map((s) => s.id))
+      let changed = false
+      const next = prev.map((g) => {
+        const filtered = g.memberIds.filter((id) => valid.has(id))
+        if (filtered.length === g.memberIds.length) return g
+        changed = true
+        return { ...g, memberIds: filtered }
+      })
+      return changed ? next : prev
+    })
+  }, [sources])
+
+  const modalOpen = importRows !== null || groupDraft !== null
+  useEffect(() => {
+    if (!modalOpen) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setImportRows(null)
+      if (e.key === 'Escape') {
+        setImportRows(null)
+        setGroupDraft(null)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [importOpen])
+  }, [modalOpen])
 
   useEffect(() => {
     if (!calendarEl.current) return
@@ -224,8 +261,71 @@ export function App() {
     )
   }
 
+  // exclusive team view: only this team's members stay enabled
+  function selectGroup(group: CalendarGroup) {
+    const members = new Set(group.memberIds)
+    setSources((prev) =>
+      prev.map((s) => ({ ...s, enabled: members.has(s.id) })),
+    )
+  }
+
+  function removeGroup(id: string) {
+    const target = groups.find((g) => g.id === id)
+    if (
+      target &&
+      !confirm(`チーム「${target.name}」を削除しますか？（メンバーのカレンダーは残ります）`)
+    ) {
+      return
+    }
+    setGroups((prev) => prev.filter((g) => g.id !== id))
+  }
+
+  function saveGroupDraft() {
+    if (!groupDraft) return
+    const name = groupDraft.name.trim()
+    if (!name) return
+    setGroups((prev) => {
+      if (groupDraft.id) {
+        return prev.map((g) =>
+          g.id === groupDraft.id
+            ? { ...g, name, memberIds: groupDraft.memberIds }
+            : g,
+        )
+      }
+      return [
+        ...prev,
+        { id: crypto.randomUUID(), name, memberIds: groupDraft.memberIds },
+      ]
+    })
+    setGroupDraft(null)
+  }
+
+  function toggleDraftMember(id: string) {
+    setGroupDraft((draft) => {
+      if (!draft) return draft
+      const has = draft.memberIds.includes(id)
+      return {
+        ...draft,
+        memberIds: has
+          ? draft.memberIds.filter((m) => m !== id)
+          : [...draft.memberIds, id],
+      }
+    })
+  }
+
+  // highlight the team whose members are exactly the enabled set
+  const enabledIds = new Set(sources.filter((s) => s.enabled).map((s) => s.id))
+  const activeGroupId = groups.find((g) => {
+    const members = g.memberIds.filter((id) => sources.some((s) => s.id === id))
+    return (
+      members.length > 0 &&
+      members.length === enabledIds.size &&
+      members.every((id) => enabledIds.has(id))
+    )
+  })?.id
+
   function exportJson() {
-    const blob = new Blob([toShareJson(sources)], {
+    const blob = new Blob([toShareJson(sources, groups)], {
       type: 'application/json',
     })
     const a = document.createElement('a')
@@ -243,17 +343,19 @@ export function App() {
     setImportError('')
     try {
       const shared = parseShareJson(await file.text())
-      if (shared.length === 0) {
+      if (shared.calendars.length === 0) {
         setImportError('ファイルに有効なカレンダーがありません')
         return
       }
       const existing = new Set(sources.map((s) => s.url))
       setImportRows(
-        shared.map((c) => {
+        shared.calendars.map((c) => {
           const exists = existing.has(c.url)
           return { ...c, exists, selected: !exists }
         }),
       )
+      setPendingGroups(shared.groups)
+      setIncludeGroups(true)
     } catch {
       setImportError('JSONファイルを読み込めませんでした')
     }
@@ -268,22 +370,48 @@ export function App() {
   function confirmImport() {
     if (!importRows) return
     const toAdd = importRows.filter((r) => r.selected && !r.exists)
-    setSources((prev) => {
-      const next = [...prev]
-      for (const row of toAdd) {
-        const colorTaken = next.some((s) => s.color === row.color)
-        const color = row.color && !colorTaken ? row.color : nextColor(next)
-        next.push({
-          id: crypto.randomUUID(),
-          name: row.name.trim() || row.url,
-          url: row.url,
-          color,
-          enabled: true,
-        })
-      }
-      return next
-    })
+    // built synchronously (not in the setSources updater) so the group
+    // merge below can resolve member URLs against the final list
+    const next = [...sources]
+    for (const row of toAdd) {
+      const colorTaken = next.some((s) => s.color === row.color)
+      const color = row.color && !colorTaken ? row.color : nextColor(next)
+      next.push({
+        id: crypto.randomUUID(),
+        name: row.name.trim() || row.url,
+        url: row.url,
+        color,
+        enabled: true,
+      })
+    }
+    setSources(next)
+
+    if (includeGroups && pendingGroups.length > 0) {
+      const idByUrl = new Map(next.map((s) => [s.url, s.id]))
+      setGroups((prev) => {
+        const merged = [...prev]
+        for (const shared of pendingGroups) {
+          const memberIds = shared.urls
+            .map((u) => idByUrl.get(u))
+            .filter((id): id is string => typeof id === 'string')
+          if (memberIds.length === 0) continue
+          const idx = merged.findIndex((g) => g.name === shared.name)
+          if (idx >= 0) {
+            merged[idx] = {
+              ...merged[idx],
+              memberIds: [
+                ...new Set([...merged[idx].memberIds, ...memberIds]),
+              ],
+            }
+          } else {
+            merged.push({ id: crypto.randomUUID(), name: shared.name, memberIds })
+          }
+        }
+        return merged
+      })
+    }
     setImportRows(null)
+    setPendingGroups([])
   }
 
   return (
@@ -312,6 +440,80 @@ export function App() {
           {error && <p class="error">{error}</p>}
         </form>
 
+        <div class="teams">
+          <div class="section-head">
+            <h2>チーム</h2>
+            <button
+              class="mini"
+              title="チームを作成"
+              onClick={() =>
+                setGroupDraft({ id: null, name: '', memberIds: [] })
+              }
+            >
+              ＋
+            </button>
+          </div>
+          {groups.map((g) => (
+            <div
+              class={`team ${g.id === activeGroupId ? 'active' : ''}`}
+              key={g.id}
+            >
+              <div class="team-row">
+                <button class="team-name" onClick={() => selectGroup(g)}>
+                  {g.name}
+                </button>
+                <button
+                  class="mini"
+                  title="編集"
+                  onClick={() =>
+                    setGroupDraft({
+                      id: g.id,
+                      name: g.name,
+                      memberIds: [...g.memberIds],
+                    })
+                  }
+                >
+                  ✎
+                </button>
+                <button
+                  class="mini remove"
+                  title="チームを削除"
+                  onClick={() => removeGroup(g.id)}
+                >
+                  ×
+                </button>
+              </div>
+              <ul class="team-members">
+                {g.memberIds.map((id) => {
+                  const s = sources.find((src) => src.id === id)
+                  if (!s) return null
+                  return (
+                    <li key={id}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={s.enabled}
+                          onChange={() => toggleSource(id)}
+                        />
+                        <span class="dot" style={{ background: s.color }} />
+                        <span class="source-name">{s.name}</span>
+                      </label>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          ))}
+          {groups.length === 0 && (
+            <p class="empty-note">
+              「＋」からチームを作ると、1クリックでそのチームの予定に切り替えられます。
+            </p>
+          )}
+        </div>
+
+        <div class="section-head">
+          <h2>メンバー</h2>
+        </div>
         <ul class="source-list">
           {sources.map((s) => (
             <li key={s.id}>
@@ -418,16 +620,83 @@ export function App() {
                 </li>
               ))}
             </ul>
+            {pendingGroups.length > 0 && (
+              <label class="import-groups">
+                <input
+                  type="checkbox"
+                  checked={includeGroups}
+                  onChange={() => setIncludeGroups((v) => !v)}
+                />
+                チーム構成も取り込む（{pendingGroups.length}件）
+              </label>
+            )}
             <div class="modal-buttons">
               <button class="secondary" onClick={() => setImportRows(null)}>
                 キャンセル
               </button>
               <button
                 onClick={confirmImport}
-                disabled={!importRows.some((r) => r.selected && !r.exists)}
+                disabled={
+                  !importRows.some((r) => r.selected && !r.exists) &&
+                  !(includeGroups && pendingGroups.length > 0)
+                }
               >
-                {importRows.filter((r) => r.selected && !r.exists).length}
-                件を取り込む
+                {(() => {
+                  const n = importRows.filter(
+                    (r) => r.selected && !r.exists,
+                  ).length
+                  return n > 0 ? `${n}件を取り込む` : 'チーム構成を取り込む'
+                })()}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {groupDraft && (
+        <div class="modal-overlay" onClick={() => setGroupDraft(null)}>
+          <div class="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>{groupDraft.id ? 'チームを編集' : 'チームを作成'}</h2>
+            <input
+              type="text"
+              class="team-name-input"
+              placeholder="チーム名（例: HaiMate）"
+              value={groupDraft.name}
+              onInput={(e) =>
+                setGroupDraft({
+                  ...groupDraft,
+                  name: (e.target as HTMLInputElement).value,
+                })
+              }
+            />
+            <p class="modal-hint">メンバーを選んでください。</p>
+            <ul class="member-pick-list">
+              {sources.map((s) => (
+                <li key={s.id}>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={groupDraft.memberIds.includes(s.id)}
+                      onChange={() => toggleDraftMember(s.id)}
+                    />
+                    <span class="dot" style={{ background: s.color }} />
+                    <span class="source-name">{s.name}</span>
+                  </label>
+                </li>
+              ))}
+              {sources.length === 0 && (
+                <li class="empty-note">先にカレンダーを追加してください</li>
+              )}
+            </ul>
+            <div class="modal-buttons">
+              <button class="secondary" onClick={() => setGroupDraft(null)}>
+                キャンセル
+              </button>
+              <button
+                onClick={saveGroupDraft}
+                disabled={!groupDraft.name.trim()}
+              >
+                保存
               </button>
             </div>
           </div>
