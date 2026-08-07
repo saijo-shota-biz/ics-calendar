@@ -16,6 +16,14 @@ The proxy has guardrails: it only relays responses that contain
 `BEGIN:VCALENDAR`, capped at 5MB — so it cannot be abused as a
 generic fetch proxy.
 
+## Teams (グルーピング)
+
+Sidebar →「チーム」→「＋」: name a team and pick its members. A member
+can belong to any number of teams. Clicking a team name shows exactly
+that team's calendars (exclusive select); individual checkboxes still
+work for fine-tuning. Team structure is included in export/import
+(members referenced by URL, so it restores on any device).
+
 ## Share calendars with the team
 
 Sidebar →「チームで共有」:
